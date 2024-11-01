@@ -1,10 +1,6 @@
 use std::{fs, io};
 
 
-
-
-
-
 #[derive(Debug, Clone)]
 struct Student<'a> {
     name: &'a str,
