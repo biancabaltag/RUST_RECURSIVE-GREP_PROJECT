@@ -3,7 +3,7 @@ use std::fs;
 use std::io::{self, Read};
 use std::path::Path;
 
-fn parcurgere_si_cautare(dir: &Path, substr_to_find: &str, count: bool) -> io::Result<()> {
+fn parcurgere_si_cautare(dir: &Path, substr_to_find: &str, count: bool, ignore_case: bool) -> io::Result<()> {
 
     if let Ok(optiuni) = fs::read_dir(dir) {
 
@@ -16,7 +16,7 @@ fn parcurgere_si_cautare(dir: &Path, substr_to_find: &str, count: bool) -> io::R
                     let path = entry.path();
                     if path.is_dir() {
 
-                        parcurgere_si_cautare(&path, substr_to_find, count)?;
+                        parcurgere_si_cautare(&path, substr_to_find, count, ignore_case)?;
                     } else if path.is_file() {
 
                         println!("CAUTAM IN FISIERUL: {}", path.display());
@@ -25,7 +25,7 @@ fn parcurgere_si_cautare(dir: &Path, substr_to_find: &str, count: bool) -> io::R
                         let mut continut_fisier = String::new();
                         
                         file.read_to_string(&mut continut_fisier)?;
-                        cautare(&continut_fisier, substr_to_find, count, &path);
+                        cautare(&continut_fisier, substr_to_find, count, ignore_case, &path);
                     }
                 }
                 Err(e) => {
@@ -42,7 +42,7 @@ fn parcurgere_si_cautare(dir: &Path, substr_to_find: &str, count: bool) -> io::R
     Ok(())
 }
 
-fn cautare(continut_fisier: &str, substr_to_find: &str, count: bool, path: &Path) {
+fn cautare(continut_fisier: &str, substr_to_find: &str, count: bool, ignore_case: bool, path: &Path) {
 
     let mut match_count = 0; // nr potriviri
     let mut linia_curenta = 1;
@@ -51,8 +51,18 @@ fn cautare(continut_fisier: &str, substr_to_find: &str, count: bool, path: &Path
     let sir_cautat_len = substr_to_find.len();
     let continut_len = continut_fisier.len();
     
-    let sir_cautat_bytes = substr_to_find.as_bytes();
-    let continut_bytes = continut_fisier.as_bytes();
+    // Convertim substr_to_find în litere mici dacă ignore_case este activ
+    let sir_cautat_bytes = if ignore_case {
+        substr_to_find.to_lowercase().as_bytes().to_vec()
+    } else {
+        substr_to_find.as_bytes().to_vec()
+    };
+
+    let continut_bytes = if ignore_case {
+        continut_fisier.to_lowercase().into_bytes()
+    } else {
+        continut_fisier.as_bytes().to_vec()
+    };
 
     let mut index = 0;
 
@@ -65,7 +75,7 @@ fn cautare(continut_fisier: &str, substr_to_find: &str, count: bool, path: &Path
         }
 
         if index + sir_cautat_len <= continut_len {
-            if am_gasit(continut_bytes, sir_cautat_bytes, index) {
+            if am_gasit(&continut_bytes, &sir_cautat_bytes, index) {
 
                 match_count += 1; // incrementam contorul
                 if !count { // daca nu este modul count, afisam liniile
@@ -102,8 +112,8 @@ fn am_gasit(continut_bytes: &[u8], sir_cautat_bytes: &[u8], start: usize) -> boo
 fn main() -> Result<(), io::Error> {
     let argumente: Vec<String> = env::args().collect();
 
-    if argumente.len() < 3 || argumente.len() > 4 {
-        eprintln!("Utilizare: {} <cale_dir> <substr_to_find> [--count]", argumente[0]);
+    if argumente.len() < 3 || argumente.len() > 5 {
+        eprintln!("Utilizare: {} <cale_dir> <substr_to_find> [--count] [--ignore-case]", argumente[0]);
         eprintln!("Te rugam să verifici formatul si sa incerci din nou.");
         return Ok(()); // continuam executia
     }
@@ -111,14 +121,15 @@ fn main() -> Result<(), io::Error> {
 
     let dir = Path::new(&argumente[1]);
     let substr_to_find = &argumente[2];
-    let count = argumente.get(3).map_or(false, |arg| arg == "--count");
+    let count = argumente.contains(&String::from("--count"));
+    let ignore_case = argumente.contains(&String::from("--ignore-case"));
 
     if !dir.exists() {
         eprintln!(
             "Eroare: nu exista acest director: {}. Te rugam sa verifici.",
             argumente[1]
         );
-        eprintln!("Utilizare: {} <cale_dir> <substr_to_find> [--count]", argumente[0]);
+        eprintln!("Utilizare: {} <cale_dir> <substr_to_find> [--count] [--ignore-case]", argumente[0]);
         return Ok(()); // continuam executia
     }
 
@@ -127,10 +138,10 @@ fn main() -> Result<(), io::Error> {
             "Eroare: nu este director: {}. Te rugăm să verifici.",
             argumente[1]
         );
-        eprintln!("Utilizare: {} <cale_dir> <substr_to_find> [--count]", argumente[0]);
+        eprintln!("Utilizare: {} <cale_dir> <substr_to_find> [--count] [--ignore-case]", argumente[0]);
         return Ok(()); // continuam executia
     }
 
-    parcurgere_si_cautare(dir, substr_to_find, count)?;
+    parcurgere_si_cautare(dir, substr_to_find, count, ignore_case)?;
     Ok(())
 }
