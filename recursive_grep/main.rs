@@ -3,7 +3,7 @@ use std::fs;
 use std::io::{self, Read};
 use std::path::Path;
 
-fn parcurgere_si_cautare(dir: &Path, substr_to_find: &str) -> io::Result<()> {
+fn parcurgere_si_cautare(dir: &Path, substr_to_find: &str, count: bool) -> io::Result<()> {
 
     if let Ok(optiuni) = fs::read_dir(dir) {
 
@@ -16,14 +16,16 @@ fn parcurgere_si_cautare(dir: &Path, substr_to_find: &str) -> io::Result<()> {
                     let path = entry.path();
                     if path.is_dir() {
 
-                        parcurgere_si_cautare(&path, substr_to_find)?;
+                        parcurgere_si_cautare(&path, substr_to_find, count)?;
                     } else if path.is_file() {
 
                         println!("CAUTAM IN FISIERUL: {}", path.display());
+
                         let mut file = fs::File::open(&path)?;
                         let mut continut_fisier = String::new();
+                        
                         file.read_to_string(&mut continut_fisier)?;
-                        cautare(&continut_fisier, substr_to_find);
+                        cautare(&continut_fisier, substr_to_find, count, &path);
                     }
                 }
                 Err(e) => {
@@ -40,8 +42,9 @@ fn parcurgere_si_cautare(dir: &Path, substr_to_find: &str) -> io::Result<()> {
     Ok(())
 }
 
-fn cautare(continut_fisier: &str, substr_to_find: &str) {
+fn cautare(continut_fisier: &str, substr_to_find: &str, count: bool, path: &Path) {
 
+    let mut match_count = 0; // nr potriviri
     let mut linia_curenta = 1;
     let mut inceput_linie = 0;
 
@@ -63,19 +66,27 @@ fn cautare(continut_fisier: &str, substr_to_find: &str) {
 
         if index + sir_cautat_len <= continut_len {
             if am_gasit(continut_bytes, sir_cautat_bytes, index) {
-                let index_in_linie = index - inceput_linie;
-                let sfarsit_linie = continut_fisier[inceput_linie..]
-                    .find('\n')
-                    .unwrap_or(continut_len - inceput_linie);
-                let linie_text = &continut_fisier[inceput_linie..inceput_linie + sfarsit_linie];
-                println!(
-                    "Am gasit substringul la linia {} si la indexul {}: {}",
-                    linia_curenta, index_in_linie, linie_text
-                );
+
+                match_count += 1; // incrementam contorul
+                if !count { // daca nu este modul count, afisam liniile
+
+                    let index_in_linie = index - inceput_linie;
+                    let sfarsit_linie = continut_fisier[inceput_linie..].find('\n').unwrap_or(continut_len - inceput_linie);
+                    let linie_text = &continut_fisier[inceput_linie..inceput_linie + sfarsit_linie];
+                    println!(
+                        "Am gasit substringul la linia {} si la indexul {}: {}",
+                        linia_curenta, index_in_linie, linie_text
+                    );
+                }
             }
         }
 
         index += 1;
+    }
+
+    if count {
+        // daca este modul count, afisam doar numarul total de potriviri
+        println!("{}: {}", path.display(), match_count);
     }
 }
 
@@ -91,24 +102,35 @@ fn am_gasit(continut_bytes: &[u8], sir_cautat_bytes: &[u8], start: usize) -> boo
 fn main() -> Result<(), io::Error> {
     let argumente: Vec<String> = env::args().collect();
 
-    if argumente.len() != 3 {
-        eprintln!("Utilizare: {} <cale_dir> <substr_to_find>", argumente[0]);
-        std::process::exit(1);
+    if argumente.len() < 3 || argumente.len() > 4 {
+        eprintln!("Utilizare: {} <cale_dir> <substr_to_find> [--count]", argumente[0]);
+        eprintln!("Te rugam să verifici formatul si sa incerci din nou.");
+        return Ok(()); // continuam executia
     }
 
 
     let dir = Path::new(&argumente[1]);
     let substr_to_find = &argumente[2];
+    let count = argumente.get(3).map_or(false, |arg| arg == "--count");
 
     if !dir.exists() {
-        eprintln!("Eroare: nu exista acest director: {}", argumente[1]);
-        std::process::exit(1);
-    }
-    if !dir.is_dir() {
-        eprintln!("Eroare: nu este director: {}", argumente[1]);
-        std::process::exit(1);
+        eprintln!(
+            "Eroare: nu exista acest director: {}. Te rugam sa verifici.",
+            argumente[1]
+        );
+        eprintln!("Utilizare: {} <cale_dir> <substr_to_find> [--count]", argumente[0]);
+        return Ok(()); // continuam executia
     }
 
-    parcurgere_si_cautare(dir, substr_to_find)?;
+    if !dir.is_dir() {
+        eprintln!(
+            "Eroare: nu este director: {}. Te rugăm să verifici.",
+            argumente[1]
+        );
+        eprintln!("Utilizare: {} <cale_dir> <substr_to_find> [--count]", argumente[0]);
+        return Ok(()); // continuam executia
+    }
+
+    parcurgere_si_cautare(dir, substr_to_find, count)?;
     Ok(())
 }
