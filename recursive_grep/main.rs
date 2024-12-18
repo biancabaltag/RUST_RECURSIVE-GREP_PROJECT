@@ -1,212 +1,219 @@
 use regex::Regex;
 use std::env;
 use std::fs;
-use std::io::{self, Read};
+use std::fs::File;
+use std::io::Read;
 use std::path::Path;
 
-fn procesare_input(
-    path: &Path,
-    substr_to_find: &str,
+struct OptionCommand<'a> {
+    //struct pt a retine optiunile selectate de utilzator
+    substr_to_find: &'a str,
     count: bool,
     ignore_case: bool,
-    regex_enabled: bool,
+    regex_op: bool,
     max_lines: Option<usize>,
-    lines_processed: &mut usize,
-) -> io::Result<()> {
-    if let Some(max) = max_lines {
-        if *lines_processed >= max {
-            return Ok(());
-        }
-    }
+}
 
+fn help() {
+    // functia helo
+    println!("Utilizare: recursive_grep <cale_fisier_sau_dir> <substr_to_find> [optiuni]");
+    println!();
+    println!("Optiuni disponibile:");
+    println!("  --count          nr de valori pentru fiecare fisier");
+    println!("  --ignore-case    not sensetive case");
+    println!("  --regex          interpretare expresie regulata");
+    println!(
+        "  --max-lines=N    se opreste din cautarea in fiser dupa un anumit nr de linii gasite"
+    );
+    println!();
+}
+
+fn procesare_input(
+    //in functie de directorul/fisierul primit ca input (functia este reapelata atunci cand vrem sa cautam in fisier)
+    path: &Path,
+    context: &OptionCommand,
+    total_matches: &mut usize,
+) -> Result<(), String> {
     if path.is_file() {
-        println!("Cautam in fisierul: {}", path.display());
-        let mut file = fs::File::open(&path)?;
+        // daca e fiser il deschidem, si aplicam functia de cautare asupra sa
+        let mut file = File::open(path)
+            .map_err(|_| format!("eroare la deschiderea fisierului: {}", path.display()))?;
         let mut continut_fisier = String::new();
-        file.read_to_string(&mut continut_fisier)?;
-        cautare(
-            &continut_fisier,
-            substr_to_find,
-            count,
-            ignore_case,
-            regex_enabled,
-            &path,
-            max_lines,
-            lines_processed,
-        );
+
+        file.read_to_string(&mut continut_fisier).map_err(|_| {
+            format!(
+                "fisierul {} nu este UTF-8 sau nu poate fi citit.",
+                path.display()
+            )
+        })?;
+        cautare(&continut_fisier, path, context, total_matches);
     } else if path.is_dir() {
-        parcurgere_si_cautare(
-            path,
-            substr_to_find,
-            count,
-            ignore_case,
-            regex_enabled,
-            max_lines,
-            lines_processed,
-        )?;
+        // daca e director apelam o functia care va cauta recursiv
+        parcurgere_si_cautare(path, context, total_matches)?;
     } else {
-        eprintln!("Eroare: {} nu este un fisier sau director valid.", path.display());
+        return Err(format!(
+            "{} nu este un fisier sau director valid.",
+            path.display()
+        ));
     }
     Ok(())
 }
 
 fn parcurgere_si_cautare(
     dir: &Path,
-    substr_to_find: &str,
-    count: bool,
-    ignore_case: bool,
-    regex_enabled: bool,
-    max_lines: Option<usize>,
-    lines_processed: &mut usize,
-) -> io::Result<()> {
-    if let Ok(optiuni) = fs::read_dir(dir) {
-        for optiune in optiuni {
-            if let Some(max) = max_lines {
-                if *lines_processed >= max {
-                    println!("Limita de {} linii a fost atinsa. Oprire procesare.", max);
-                    break;
-                }
-            }
-            match optiune {
-                Ok(entry) => {
-                    let path = entry.path();
-                    procesare_input(
-                        &path,
-                        substr_to_find,
-                        count,
-                        ignore_case,
-                        regex_enabled,
-                        max_lines,
-                        lines_processed,
-                    )?;
-                }
-                Err(e) => {
-                    eprintln!("Eroare la citirea optiunii: {}", e);
-                }
-            }
+    context: &OptionCommand,
+    total_matches: &mut usize,
+) -> Result<(), String> {
+    // functia imparte un director in doi vectori, de subdirectoare si fisiere
+    let mut subdirectoare = Vec::new();
+    let mut fisiere = Vec::new();
+
+    for optiune in fs::read_dir(dir)
+        .map_err(|_| format!("eroare la citirea directorului : {}", dir.display()))?
+    {
+        let entry = optiune.map_err(|_| {
+            format!(
+                "eroare la procesarea unei intrari din directorul: {}",
+                dir.display()
+            )
+        })?;
+        let path = entry.path();
+
+        if path.is_dir() {
+            subdirectoare.push(path);
+        } else if path.is_file() {
+            fisiere.push(path);
         }
-    } else {
-        eprintln!("Eroare: Nu am putut citi directorul {}", dir.display());
     }
+
+    for subdir in subdirectoare {
+        //parcurge intai directoarele pentru a ajunge la cel mai indepartat fisier
+        parcurgere_si_cautare(&subdir, context, total_matches)?; //apelare recursiva
+    }
+
+    for fisier in fisiere {
+        procesare_input(&fisier, context, total_matches)?;
+    }
+
     Ok(())
 }
 
-fn cautare(
-    continut_fisier: &str,
-    substr_to_find: &str,
-    count: bool,
-    ignore_case: bool,
-    regex_enabled: bool,
-    path: &Path,
-    max_lines: Option<usize>,
-    lines_processed: &mut usize,
-) {
+fn cautare(continut_fisier: &str, path: &Path, context: &OptionCommand, total_matches: &mut usize) {
     let mut match_count = 0;
-    let regex = if regex_enabled {
-        let pattern = if ignore_case {
-            format!("(?i){}", substr_to_find)
+    let mut lines_in_file = 0;
+
+    let regex = if context.regex_op {
+        //daca e regex, aplica anumite schimbari asupra lui
+        let pattern = if context.ignore_case {
+            format!("(?i){}", context.substr_to_find)
         } else {
-            substr_to_find.to_string()
+            context.substr_to_find.to_string()
         };
         match Regex::new(&pattern) {
             Ok(r) => Some(r),
             Err(e) => {
-                eprintln!("Eroare in regex-ul introdus '{}': {}", substr_to_find, e);
+                eprintln!(
+                    "eroare in regex-ul introdus '{}': {}",
+                    context.substr_to_find, e
+                );
                 std::process::exit(1);
             }
         }
     } else {
-        None
+        None //daca e string, nu face nicio schimbare
     };
 
     for (line_number, line) in continut_fisier.lines().enumerate() {
         let found = if let Some(ref regex) = regex {
             regex.is_match(line)
-        } else if ignore_case {
-            line.to_lowercase().contains(&substr_to_find.to_lowercase())
+        } else if context.ignore_case {
+            line.to_lowercase()
+                .contains(&context.substr_to_find.to_lowercase())
         } else {
-            line.contains(substr_to_find)
+            line.contains(context.substr_to_find)
         };
 
         if found {
-            match_count += 1;
+            // daca au match, atunci incrementam nr de match uri din fisier
+            lines_in_file += 1;
 
-            if let Some(max) = max_lines {
-                if *lines_processed >= max {
-                    break;
-                }
+            if context.max_lines.is_some() && lines_in_file > context.max_lines.unwrap() {
+                break; // daca am ajuns la nr maxim de linii iesim
             }
 
-            if !count {
-                *lines_processed += 1;
-                println!("linia {}: {}", line_number + 1, line);
+            match_count += 1;
+
+            if !context.count {
+                println!("{}: Linia {}: {}", path.display(), line_number + 1, line);
             }
         }
     }
 
-    if count && match_count > 0 {
-        if let Some(max) = max_lines {
-            let remaining = if *lines_processed > max {
-                0
-            } else {
-                max - *lines_processed
-            };
-            let to_display = if match_count > remaining {
-                remaining
-            } else {
-                match_count
-            };
-
-            if to_display > 0 {
-                println!("{}: {}", path.display(), to_display);
-                *lines_processed += to_display;
-            }
-        } else {
-            println!("{}: {}", path.display(), match_count);
-        }
+    if context.count {
+        // o optiune bonus, in care sunt afisate si match urile totale din toate fisierele
+        println!("{}: {}", path.display(), match_count);
+        *total_matches += match_count;
     }
 }
 
-fn main() -> Result<(), io::Error> {
+fn main() -> Result<(), String> {
     let argumente: Vec<String> = env::args().collect();
 
-    if argumente.len() < 3 || argumente.len() > 7 {
-        eprintln!(
-            "Utilizare: {} <cale_fisier_sau_dir> <substr_to_find> [--count] [--ignore-case] [--regex] [--max-lines=N]",
-            argumente[0]
-        );
+    if argumente.contains(&String::from("--help")) {
+        help();
         return Ok(());
     }
+
+    if argumente.len() < 3 || argumente.len() > 7 {
+        return Err("eroare: Numar invalid de argumente.".to_string());
+    }
+
+    //sunt extrase toate arg din linia de comanda si stocate intr un struct definit anterior
 
     let path = Path::new(&argumente[1]);
     let substr_to_find = &argumente[2];
     let count = argumente.contains(&String::from("--count"));
     let ignore_case = argumente.contains(&String::from("--ignore-case"));
-    let regex_enabled = argumente.contains(&String::from("--regex"));
+    let regex_op = argumente.contains(&String::from("--regex"));
     let mut max_lines = None;
 
     for arg in &argumente {
         if arg.starts_with("--max-lines=") {
-            if let Some(nr) = arg.split('=').nth(1) {
-                max_lines = nr.parse::<usize>().ok();
+            //validarea constantei de dupa =
+            let value = arg.split('=').nth(1);
+            match value {
+                Some(num) if num.chars().all(char::is_numeric) => {
+                    max_lines = num.parse::<usize>().ok();
+                }
+                _ => {
+                    return Err("--max-lines trebuie sa fie un numar valid.".to_string());
+                }
             }
         }
     }
 
     if !path.exists() {
-        eprintln!("Eroare: Calea {} nu exista.", argumente[1]);
-        return Ok(());
+        //verificare existenta cale
+        return Err(format!("calea {} nu exista.", argumente[1]));
     }
 
-    let mut lines_processed = 0;
-    procesare_input(
-        path,
+    //stocarea informatiilor despre comanda utilizatorului
+
+    let context = OptionCommand {
         substr_to_find,
         count,
         ignore_case,
-        regex_enabled,
+        regex_op,
         max_lines,
-        &mut lines_processed,
-    )?;
+    };
+
+    let mut total_matches = 0;
+    procesare_input(path, &context, &mut total_matches)?;
+
+    //afisare total potriviri daca optiunea count este true
+    if context.count {
+        println!("total potriviri: {}", total_matches);
+    }
+
     Ok(())
 }
